@@ -8,12 +8,13 @@ Implementing transformers papers very simplified because until you code it you d
 - [ ] Implement BERT
 - [ ] Implement T5
 
-### Training optimizations
+### Training
 - [ ] Implement p-tuning
 - [ ] Implement prompt tuning
 - [ ] Implement LoRA
 - [ ] Implement DoRA
 - [ ] Implement DPO
+- [ ] Implement [Efficient Training of Language Models to Fill in the Middle](https://arxiv.org/pdf/2207.14255.pdf)
 
 ### Inference
 - [ ] Implement top-k
