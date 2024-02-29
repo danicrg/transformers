@@ -26,4 +26,7 @@ Implementing transformers papers very simplified because until you code it you d
 ### Metrics
 - [ ] Implement hallucination metrics
 
+### Optimizations
+- [ ] Flash attention
+
 
