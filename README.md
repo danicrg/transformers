@@ -15,6 +15,10 @@ Implementing transformers papers very simplified because until you code it you d
 - [ ] Implement DoRA
 - [ ] Implement DPO
 
+### Inference
+- [ ] Implement top-k
+- [ ] Implement temperature
+
 ### Supervised Fine Tuning
 - [ ] Implement addition of new tokens
 
