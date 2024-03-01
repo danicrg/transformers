@@ -62,9 +62,7 @@ class BigramLanguageModel(nn.Module):
 
     def forward(self, idx, targets=None):
 
-        logits = self.token_embedding_table(
-            idx
-        )  # (B, T, C) C being vocab size in this case
+        logits = self.token_embedding_table(idx)  # (B, T, C) C being vocab size in this case
 
         if targets is None:
             return logits, None
@@ -130,10 +128,4 @@ for i in tqdm(range(n_steps)):
 print(loss.item())
 
 m.eval()
-print(
-    tokenizer.decode(
-        m.generate(idx=torch.zeros((1, 1), dtype=torch.int64), max_new_tokens=100)[
-            0
-        ].tolist()
-    )
-)
+print(tokenizer.decode(m.generate(idx=torch.zeros((1, 1), dtype=torch.int64), max_new_tokens=100)[0].tolist()))

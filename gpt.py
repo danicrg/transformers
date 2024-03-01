@@ -36,15 +36,9 @@ class Head(nn.Module):
 
     def __init__(self, config):
         super().__init__()
-        self.key = nn.Linear(
-            config.n_embed, config.n_embed // config.n_head, bias=False
-        )
-        self.query = nn.Linear(
-            config.n_embed, config.n_embed // config.n_head, bias=False
-        )
-        self.value = nn.Linear(
-            config.n_embed, config.n_embed // config.n_head, bias=False
-        )
+        self.key = nn.Linear(config.n_embed, config.n_embed // config.n_head, bias=False)
+        self.query = nn.Linear(config.n_embed, config.n_embed // config.n_head, bias=False)
+        self.value = nn.Linear(config.n_embed, config.n_embed // config.n_head, bias=False)
         self.register_buffer(
             "tril", torch.tril(torch.ones(config.block_size, config.block_size))
         )  # So these are not weights of the model
@@ -58,9 +52,7 @@ class Head(nn.Module):
         k = self.key(x)  # (B,T,hs)
         q = self.query(x)  # (B,T,hs)
         # compute attention scores ("affinities")
-        wei = (
-            q @ k.transpose(-2, -1) * k.shape[-1] ** -0.5
-        )  # (B, T, hs) @ (B, hs, T) -> (B, T, T)
+        wei = q @ k.transpose(-2, -1) * k.shape[-1] ** -0.5  # (B, T, hs) @ (B, hs, T) -> (B, T, T)
         wei = wei.masked_fill(self.tril[:T, :T] == 0, float("-inf"))  # (B, T, T)
         wei = F.softmax(wei, dim=-1)  # (B, T, T)
         wei = self.dropout(wei)
@@ -87,6 +79,44 @@ class MultiHeadAttention(nn.Module):
         return out
 
 
+class BatchMultiHeadAttention(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+
+        self.key = nn.Linear(config.n_embed, config.n_embed, bias=False)
+        self.query = nn.Linear(config.n_embed, config.n_embed, bias=False)
+        self.value = nn.Linear(config.n_embed, config.n_embed, bias=False)
+
+        self.proj = nn.Linear(config.n_embed, config.n_embed)
+        self.att_dropout = nn.Dropout(config.dropout)
+        self.resid_dropout = nn.Dropout(config.dropout)
+
+        self.register_buffer("tril", torch.tril(torch.ones(config.block_size, config.block_size)))
+
+        self.n_head = config.n_head
+
+    def forward(self, x):
+        B, T, C = x.shape
+
+        k = self.key(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
+        q = self.query(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
+        v = self.value(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
+
+        wei = q @ k.transpose(-2, -1) * k.shape[-1] ** -0.5  # (B, nh, T, hs) @ (B, nh, hs, T) = (B, nh, T, T)
+
+        wei = wei.masked_fill(self.tril[:T, :T] == 0, float("-inf"))
+        wei = F.softmax(wei, dim=-1)  # (B, nh, T, T)
+        wei = self.dropout(wei)
+
+        out = wei @ v  # (B, nh, T, hs)
+        out = out.transpose(1, 2).contiguous().view(B, T, C)
+        out = self.proj(out)
+        
+        out = self.resid_dropout(out)
+
+        return out
+
+
 class FeedFoward(nn.Module):
     """a simple linear layer followed by a non-linearity"""
 
@@ -108,7 +138,7 @@ class Block(nn.Module):
     def __init__(self, config) -> None:
         super().__init__()
 
-        self.sa = MultiHeadAttention(config)
+        self.sa = BatchMultiHeadAttention(config)
         self.ffw = FeedFoward(config)
 
         self.ln1 = nn.LayerNorm(config.n_embed)
@@ -127,8 +157,10 @@ class GPTModel(nn.Module):
 
         self.token_embedding_table = nn.Embedding(config.vocab_size, config.n_embed)
         self.position_embedding = nn.Embedding(config.block_size, config.n_embed)
+        
         self.blocks = nn.Sequential(*[Block(config) for _ in range(config.n_layer)])
         self.ln = nn.LayerNorm(config.n_embed)
+        
         self.lm_head = nn.Linear(config.n_embed, config.vocab_size)
         self.block_size = config.block_size
 
@@ -136,9 +168,7 @@ class GPTModel(nn.Module):
         idx = idx[:, -self.block_size :]
         B, T = idx.shape
 
-        tok_embed = self.token_embedding_table(
-            idx
-        )  # (B, T, n_embed) C being embed size in this case
+        tok_embed = self.token_embedding_table(idx)  # (B, T, n_embed) C being embed size in this case
         pos_embed = self.position_embedding(torch.arange(T, device=device))  # (T, C)
         x = tok_embed + pos_embed
         x = self.blocks(x)
@@ -215,7 +245,7 @@ class Config:
     n_steps = 5_000
     batch_size = 64
     n_embed = 384
-    block_size = 256  # what is the maximum context length for predictions?
+    block_size = 256
     dropout = 0.2
     n_layer = 6
     n_head = 6
@@ -227,26 +257,18 @@ config = Config()
 m = GPTModel(config).to(device)
 optimizer = torch.optim.AdamW(m.parameters(), lr=config.learning_rate)
 
-print(
-    "Number of parameters: ", sum(p.numel() for p in m.parameters() if p.requires_grad)
-)
+print("Number of parameters: ", sum(p.numel() for p in m.parameters() if p.requires_grad))
 
 for i in tqdm(range(config.n_steps)):
 
-    xb, yb = get_batch(
-        "train", batch_size=config.batch_size, block_size=config.block_size
-    )
+    xb, yb = get_batch("train", batch_size=config.batch_size, block_size=config.block_size)
     _, loss = m(xb.to(device), yb.to(device))
 
     if i % 100 == 0:
         print(estimate_loss(m))
         context = get_batch("val", batch_size=1, block_size=1)[0]
         print("Writing Sample:")
-        print(
-            tokenizer.decode(
-                m.generate(idx=context.to(device), max_new_tokens=100)[0].tolist()
-            )
-        )
+        print(tokenizer.decode(m.generate(idx=context.to(device), max_new_tokens=100)[0].tolist()))
 
     optimizer.zero_grad(set_to_none=True)
     loss.backward()

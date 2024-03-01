@@ -64,9 +64,7 @@ class BigramLanguageModel(nn.Module):
         idx = idx[:, -self.context_length :]
         B, T = idx.shape
 
-        tok_embed = self.token_embedding_table(
-            idx
-        )  # (B, T, C) C being embed size in this case
+        tok_embed = self.token_embedding_table(idx)  # (B, T, C) C being embed size in this case
         pos_embed = self.position_embedding(torch.arange(T))  # (T, C)
         x = tok_embed + pos_embed
         logits = self.lm_head(x)  # (B, T, C) C being vocab size in this case
