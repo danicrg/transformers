@@ -106,12 +106,12 @@ class BatchMultiHeadAttention(nn.Module):
 
         wei = wei.masked_fill(self.tril[:T, :T] == 0, float("-inf"))
         wei = F.softmax(wei, dim=-1)  # (B, nh, T, T)
-        wei = self.dropout(wei)
+        wei = self.att_dropout(wei)
 
         out = wei @ v  # (B, nh, T, hs)
         out = out.transpose(1, 2).contiguous().view(B, T, C)
         out = self.proj(out)
-        
+
         out = self.resid_dropout(out)
 
         return out
@@ -157,10 +157,10 @@ class GPTModel(nn.Module):
 
         self.token_embedding_table = nn.Embedding(config.vocab_size, config.n_embed)
         self.position_embedding = nn.Embedding(config.block_size, config.n_embed)
-        
+
         self.blocks = nn.Sequential(*[Block(config) for _ in range(config.n_layer)])
         self.ln = nn.LayerNorm(config.n_embed)
-        
+
         self.lm_head = nn.Linear(config.n_embed, config.vocab_size)
         self.block_size = config.block_size
 
@@ -199,22 +199,6 @@ class GPTModel(nn.Module):
             idx = torch.cat((idx, index), dim=-1)  # Becomes (B, T + 1)
 
         return idx
-
-
-@torch.no_grad()
-def estimate_loss(model: nn.Module, n_estimations=100):
-    out = {}
-    model.eval()
-    for split in ["train", "val"]:
-        losses = torch.zeros(n_estimations)
-        for k in range(n_estimations):
-            x, y = get_batch(split)
-            _, loss = model(x.to(device), y.to(device))
-            losses[k] = loss
-
-        out[split] = losses.mean()
-    model.train()
-    return out
 
 
 device = "mps" if torch.backends.mps.is_available() else "cpu"
@@ -258,6 +242,23 @@ m = GPTModel(config).to(device)
 optimizer = torch.optim.AdamW(m.parameters(), lr=config.learning_rate)
 
 print("Number of parameters: ", sum(p.numel() for p in m.parameters() if p.requires_grad))
+
+
+@torch.no_grad()
+def estimate_loss(model: nn.Module, n_estimations=100):
+    out = {}
+    model.eval()
+    for split in ["train", "val"]:
+        losses = torch.zeros(n_estimations)
+        for k in range(n_estimations):
+            x, y = get_batch(split)
+            _, loss = model(x.to(device), y.to(device))
+            losses[k] = loss
+
+        out[split] = losses.mean()
+    model.train()
+    return out
+
 
 for i in tqdm(range(config.n_steps)):
 
