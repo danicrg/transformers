@@ -125,7 +125,7 @@ class Block(nn.Module):
         return x
 
 
-class BigramLanguageModel(nn.Module):
+class GPTModel(nn.Module):
 
     def __init__(self, vocab_size, n_embed, context_length):
         super().__init__()
@@ -202,7 +202,7 @@ n_layer = 6
 n_head = 6
 learning_rate = 4e-4
 
-m = BigramLanguageModel(tokenizer.vocab_size, n_embed, context_length).to(device)
+m = GPTModel(tokenizer.vocab_size, n_embed, context_length).to(device)
 optimizer = torch.optim.AdamW(m.parameters(), lr=learning_rate)
 
 print("Number of parameters: ", sum(p.numel() for p in m.parameters() if p.requires_grad))
