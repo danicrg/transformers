@@ -4,7 +4,7 @@ Implementing transformers papers very simplified because until you code it you d
 ## Features
 
 ### Models
-- [ ] Implement GPT
+- [x] Implement GPT
 - [ ] Implement BERT
 - [ ] Implement T5
 
