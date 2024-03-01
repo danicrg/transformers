@@ -29,35 +29,17 @@ def read_data():
     return text
 
 
-text = read_data()
-tokenizer = Tokenizer(text)
-
-data = torch.tensor(tokenizer.encode(text), dtype=torch.int64)
-
-n = int(0.9*len(data)) # first 90% will be train, rest val
-train_data = data[:n]
-val_data = data[n:]
-
-def get_batch(split, batch_size=4, block_size=8):
-    # generate a small batch of data of inputs x and targets y
-    data = train_data if split == 'train' else val_data
-    ix = torch.randint(len(data) - block_size, (batch_size,))
-    x = torch.stack([data[i:i+block_size] for i in ix])
-    y = torch.stack([data[i+1:i+block_size+1] for i in ix])
-    return x, y
-
-
 class Head(nn.Module):
     """ one head of self-attention """
 
-    def __init__(self, head_size):
+    def __init__(self, config):
         super().__init__()
-        self.key = nn.Linear(n_embed, head_size, bias=False)
-        self.query = nn.Linear(n_embed, head_size, bias=False)
-        self.value = nn.Linear(n_embed, head_size, bias=False)
-        self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size))) # So these are not weights of the model
+        self.key = nn.Linear(config.n_embed, config.n_embed // config.n_head, bias=False)
+        self.query = nn.Linear(config.n_embed, config.n_embed // config.n_head, bias=False)
+        self.value = nn.Linear(config.n_embed, config.n_embed // config.n_head, bias=False)
+        self.register_buffer('tril', torch.tril(torch.ones(config.block_size, config.block_size))) # So these are not weights of the model
 
-        self.dropout = nn.Dropout(dropout)
+        self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
         # input of size (batch, time-step, channels)
@@ -76,13 +58,13 @@ class Head(nn.Module):
         return out
     
 class MultiHeadAttention(nn.Module):
-    def __init__(self, n_heads, head_size):
+    def __init__(self, config):
         super().__init__()
 
-        self.heads = nn.ModuleList([Head(head_size=head_size) for _ in range(n_heads)])
-        self.proj = nn.Linear(n_heads*head_size, n_embed)
+        self.heads = nn.ModuleList([Head(config) for _ in range(config.n_head)])
+        self.proj = nn.Linear(config.n_embed, config.n_embed)
 
-        self.dropout = nn.Dropout(dropout)
+        self.dropout = nn.Dropout(config.dropout)
     
     def forward(self, x):
         
@@ -95,13 +77,13 @@ class MultiHeadAttention(nn.Module):
 class FeedFoward(nn.Module):
     """ a simple linear layer followed by a non-linearity """
 
-    def __init__(self, n_embd):
+    def __init__(self, config):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(n_embd, 4 * n_embd),
+            nn.Linear(config.n_embed, 4 * config.n_embed),
             nn.GELU(),
-            nn.Linear(4 * n_embed, n_embed),
-            nn.Dropout(dropout)
+            nn.Linear(4 * config.n_embed, config.n_embed),
+            nn.Dropout(config.dropout)
         )
 
     def forward(self, x):
@@ -109,15 +91,14 @@ class FeedFoward(nn.Module):
 
 class Block(nn.Module):
     
-    def __init__(self, n_embed, n_head) -> None:
+    def __init__(self, config) -> None:
         super().__init__()
 
-        head_size = n_embed // n_head
-        self.sa = MultiHeadAttention(n_heads=n_head, head_size=head_size)
-        self.ffw = FeedFoward(n_embed)
+        self.sa = MultiHeadAttention(config)
+        self.ffw = FeedFoward(config)
 
-        self.ln1 = nn.LayerNorm(n_embed)
-        self.ln2 = nn.LayerNorm(n_embed)
+        self.ln1 = nn.LayerNorm(config.n_embed)
+        self.ln2 = nn.LayerNorm(config.n_embed)
 
     def forward(self, x):
         x = x + self.sa(self.ln1(x)) # Residual connections
@@ -127,18 +108,18 @@ class Block(nn.Module):
 
 class GPTModel(nn.Module):
 
-    def __init__(self, vocab_size, n_embed, context_length):
+    def __init__(self, config):
         super().__init__()
 
-        self.token_embedding_table = nn.Embedding(vocab_size, n_embed)
-        self.position_embedding = nn.Embedding(context_length, n_embed)
-        self.blocks = nn.Sequential(*[Block(n_embed, n_head=n_head) for _ in range(n_layer)])
-        self.ln = nn.LayerNorm(n_embed)
-        self.lm_head = nn.Linear(n_embed, vocab_size)
-        self.context_length = context_length
+        self.token_embedding_table = nn.Embedding(config.vocab_size, config.n_embed)
+        self.position_embedding = nn.Embedding(config.block_size, config.n_embed)
+        self.blocks = nn.Sequential(*[Block(config) for _ in range(config.n_layer)])
+        self.ln = nn.LayerNorm(config.n_embed)
+        self.lm_head = nn.Linear(config.n_embed, config.vocab_size)
+        self.block_size = config.block_size
 
     def forward(self, idx, targets=None):
-        idx = idx[:, -self.context_length:]
+        idx = idx[:, -self.block_size:]
         B, T = idx.shape
 
         tok_embed = self.token_embedding_table(idx) # (B, T, C) C being embed size in this case
@@ -191,25 +172,47 @@ def estimate_loss(model: nn.Module, n_estimations=100):
 
 device = "mps" if torch.backends.mps.is_available() else "cpu"
 
-# Hyperparameters
-n_steps = 5_000
-batch_size = 64
-n_embed = 384
-block_size = 256 # what is the maximum context length for predictions?
-context_length = block_size
-dropout=0.2
-n_layer = 6
-n_head = 6
-learning_rate = 4e-4
 
-m = GPTModel(tokenizer.vocab_size, n_embed, context_length).to(device)
-optimizer = torch.optim.AdamW(m.parameters(), lr=learning_rate)
+# Training
+text = read_data()
+tokenizer = Tokenizer(text)
+
+data = torch.tensor(tokenizer.encode(text), dtype=torch.int64)
+
+n = int(0.9*len(data)) # first 90% will be train, rest val
+train_data = data[:n]
+val_data = data[n:]
+
+def get_batch(split, batch_size=4, block_size=8):
+    # generate a small batch of data of inputs x and targets y
+    data = train_data if split == 'train' else val_data
+    ix = torch.randint(len(data) - block_size, (batch_size,))
+    x = torch.stack([data[i:i+block_size] for i in ix])
+    y = torch.stack([data[i+1:i+block_size+1] for i in ix])
+    return x, y
+
+
+class Config:
+    vocab_size = tokenizer.vocab_size
+    n_steps = 5_000
+    batch_size = 64
+    n_embed = 384
+    block_size = 256 # what is the maximum context length for predictions?
+    dropout=0.2
+    n_layer = 6
+    n_head = 6
+    learning_rate = 4e-4
+
+config = Config()
+
+m = GPTModel(config).to(device)
+optimizer = torch.optim.AdamW(m.parameters(), lr=config.learning_rate)
 
 print("Number of parameters: ", sum(p.numel() for p in m.parameters() if p.requires_grad))
 
-for i in tqdm(range(n_steps)):
+for i in tqdm(range(config.n_steps)):
 
-    xb, yb = get_batch("train", batch_size=batch_size, block_size=block_size)
+    xb, yb = get_batch("train", batch_size=config.batch_size, block_size=config.block_size)
     _, loss = m(xb.to(device), yb.to(device))
 
     if i % 100 == 0:
